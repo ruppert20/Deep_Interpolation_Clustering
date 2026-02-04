@@ -24,13 +24,93 @@ def parse_args():
     description = "Implementation of deep clustering for processing time series data"
     parser = argparse.ArgumentParser(description=description)
 
-    parser.add_argument('--hours_from_admission', type=int, default=6,
+    parser.add_argument('--hours_from_admission', type=int, default=24,
                          help='Hours of record to look at')
+    parser.add_argument('--resample_minutes', type=int, default=5,
+                         help='Resample interval in minutes (0 to disable resampling)')
     parser.add_argument('--norm_method', type=str, default='minmax',
                          choices=['minmax'],
-                         help='The type of normalization method to preprocess data')  
+                         help='The type of normalization method to preprocess data')
+    parser.add_argument('--clean', action='store_true',
+                         help='Force reprocessing by ignoring existing checkpoints')
     args = parser.parse_args()
     return args
+
+def load_checkpoint(checkpoint_path, checkpoint_name):
+    """Load a checkpoint if it exists."""
+    filepath = os.path.join(checkpoint_path, f"{checkpoint_name}.pickle")
+    if os.path.exists(filepath):
+        print(f"  [CHECKPOINT] Loading {checkpoint_name} from cache...")
+        with open(filepath, 'rb') as f:
+            return pickle.load(f), True
+    return None, False
+
+def save_checkpoint(data, checkpoint_path, checkpoint_name):
+    """Save a checkpoint."""
+    os.makedirs(checkpoint_path, exist_ok=True)
+    filepath = os.path.join(checkpoint_path, f"{checkpoint_name}.pickle")
+    print(f"  [CHECKPOINT] Saving {checkpoint_name}...")
+    with open(filepath, 'wb') as f:
+        pickle.dump(data, f)
+
+def clear_checkpoints(checkpoint_path):
+    """Clear all checkpoints in the given path."""
+    if os.path.exists(checkpoint_path):
+        import shutil
+        shutil.rmtree(checkpoint_path)
+        print(f"  Cleared checkpoints in {checkpoint_path}")
+
+def resample_vital_data(vital_data, resample_minutes, hours_from_admission):
+    """
+    Resample vital data to fixed time intervals.
+
+    Args:
+        vital_data: Dictionary of DataFrames with columns [encounter_deiden_id, time_stamp, measurement]
+        resample_minutes: Interval in minutes for resampling
+        hours_from_admission: Total hours of data
+
+    Returns:
+        Dictionary with resampled DataFrames
+    """
+    resample_hours = resample_minutes / 60.0
+    # Create time bins from 0 to hours_from_admission
+    num_bins = int(hours_from_admission * 60 / resample_minutes)
+    bin_edges = np.linspace(0, hours_from_admission, num_bins + 1)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+    print(f"  Resampling to {resample_minutes}-minute intervals ({num_bins} time points)")
+
+    resampled_data = {}
+
+    for vital_name, df in vital_data.items():
+        print(f"    Processing {vital_name}...")
+
+        # Assign each observation to a bin
+        df = df.copy()
+        df['bin_idx'] = np.digitize(df['time_stamp'], bin_edges) - 1
+        # Clip to valid range (handle edge cases)
+        df['bin_idx'] = df['bin_idx'].clip(0, num_bins - 1)
+
+        # Group by encounter and bin, compute mean
+        grouped = df.groupby(['encounter_deiden_id', 'bin_idx']).agg({
+            'measurement': 'mean'
+        }).reset_index()
+
+        # Map bin index to bin center time
+        grouped['time_stamp'] = grouped['bin_idx'].map(lambda x: bin_centers[x])
+
+        # Select final columns
+        resampled_df = grouped[['encounter_deiden_id', 'time_stamp', 'measurement']].copy()
+        resampled_df = resampled_df.sort_values(['encounter_deiden_id', 'time_stamp'])
+
+        resampled_data[vital_name] = resampled_df
+
+        # Print stats
+        orig_count = len(df)
+        new_count = len(resampled_df)
+        print(f"      {orig_count:,} -> {new_count:,} observations ({100*new_count/orig_count:.1f}%)")
+
+    return resampled_data
 
 def generate_data(encounter, vital_data):
     """
@@ -53,13 +133,13 @@ def generate_data(encounter, vital_data):
     feat = np.zeros((len(encounter), len(vital_data), max_length))
     padding_mask = np.zeros_like(feat, dtype=np.int8)
     time_step = np.zeros_like(feat)
-    encounter_id_lst = encounter['encounter_deiden_id'].tolist()   
+    encounter_id_lst = encounter['encounter_deiden_id'].astype(str).tolist()
     encounter_idx_map = {eid : i for i, eid in enumerate(encounter_id_lst)}
 
     count = 0
     for feature_name, df in vital_data.items():
         print('process data frame {}'.format(feature_name))
-        for encounter_id, sub_df in df.groupby(['encounter_deiden_id']):
+        for encounter_id, sub_df in df.groupby('encounter_deiden_id'):
             encounter_idx = encounter_idx_map[encounter_id]
             num_records = len(sub_df)
             padding_mask[encounter_idx, count, : num_records] = 1
@@ -107,7 +187,7 @@ def hold_out(mask, perc=0.2):
             count = np.sum(mask[i, j], dtype='int')
             if int(0.20*count) > 1:
                 index = 0
-                r = np.ones((count, 1))
+                r = np.ones(count)
                 b = np.random.choice(count, int(0.20*count), replace=False)
                 r[b] = 0
                 for k in range(mask.shape[2]):
@@ -135,27 +215,65 @@ def normalize_data(split_dict, norm_method='minmax'):
 set_seed(7529)
 args = parse_args()
 num_features = len(USE_FEATURES)
-hours_from_admission = args.hours_from_admission 
+hours_from_admission = args.hours_from_admission
 norm_method = args.norm_method
 
 data_path = os.path.join(BASE_PATH, 'Data')
 vital_path = os.path.join(data_path, 'vital_data')
 encounter_path = os.path.join(data_path, 'encounter_data')
 model_data_path = os.path.join(data_path, 'model_data')
+checkpoint_path = os.path.join(model_data_path, 'checkpoints')
+
+# Handle --clean flag
+if args.clean:
+    print("=" * 50)
+    print("Clean mode: Clearing all checkpoints...")
+    clear_checkpoints(checkpoint_path)
+    clear_checkpoints(os.path.join(model_data_path, 'split_org'))
+    clear_checkpoints(os.path.join(model_data_path, 'split_processed'))
 
 # 1.encounter file
-encounter_f = os.path.join(encounter_path, 'encounters_6h_lastTwoYears_admit_simple.csv')
+print("=" * 50)
+print("Step 1: Loading encounter file...")
+encounter_f = os.path.join(encounter_path, 'encounters.csv')
 encounter = pd.read_csv(encounter_f, index_col=False)
+print(f"  Loaded {len(encounter)} encounters")
 
 # 2.load vital data
+print("=" * 50)
+print(f"Step 2: Loading vital data ({hours_from_admission}h)...")
 vital_data_path = os.path.join(vital_path, f'original_data_{hours_from_admission}h.pickle')
 with open(vital_data_path, 'rb') as f:
     data = pickle.load(f)
 f.close()
+print(f"  Loaded {len(data)} vital features: {list(data.keys())}")
 
-data_dict = generate_data(encounter, data)
+# 2b. Resample vital data to fixed intervals
+resample_minutes = args.resample_minutes
+if resample_minutes > 0:
+    print("=" * 50)
+    print(f"Step 2b: Resampling vital data...")
+    data = resample_vital_data(data, resample_minutes, hours_from_admission)
+    # Expected number of time points after resampling
+    expected_max_length = int(hours_from_admission * 60 / resample_minutes)
+    print(f"  Expected max sequence length: {expected_max_length}")
+else:
+    print("  Resampling disabled (--resample_minutes 0)")
+
+# 3. Generate data arrays (with checkpoint)
+print("=" * 50)
+print("Step 3: Generating data arrays...")
+checkpoint_name = f'data_dict_{hours_from_admission}h_resample{resample_minutes}min'
+data_dict, loaded = load_checkpoint(checkpoint_path, checkpoint_name)
+if not loaded:
+    data_dict = generate_data(encounter, data)
+    save_checkpoint(data_dict, checkpoint_path, checkpoint_name)
+assert isinstance(data_dict, dict)
+print(f"  Data arrays shape: {data_dict['feat'].shape}")
 
 # 3.load split index data
+print("=" * 50)
+print("Step 4: Loading split indices...")
 idx_path = os.path.join(model_data_path, 'idx.pickle')
 with open(idx_path, 'rb') as f:
     split_encounter_id = pickle.load(f)
@@ -163,42 +281,80 @@ f.close()
 
 indices = dict()
 for cohort in COHORTS:
-    index = np.asarray([data_dict["encounter_id"].index(x) for x in split_encounter_id[cohort + '_idx']])
+    index = np.asarray([data_dict["encounter_id"].index(x) for x in split_encounter_id[cohort + '_idx']]) # type: ignore
     indices[cohort + '_index'] = index
+    print(f"  {cohort}: {len(index)} samples")
 
 # 4.Prepossing data
 # save split original data before pre-processing, e.g., imputation and normalization; and store them in split_dict
+print("=" * 50)
+print("Step 5: Splitting and saving original data...")
 split_dict = defaultdict(dict)
+split_org_path = os.path.join(model_data_path, "split_org")
+os.makedirs(split_org_path, exist_ok=True)
 
 for cohort in COHORTS:
-    split_org_path = os.path.join(model_data_path, "split_org")
-    os.makedirs(split_org_path, exist_ok=True)
+    loaded_count = 0
+    saved_count = 0
     for k, v in data_dict.items():
         tmp_data_f = os.path.join(split_org_path, "{}_{}.pickle".format(cohort, k))
         if not os.path.exists(tmp_data_f):
             tmp_data = np.asarray(v)[indices["{}_index".format(cohort)]]
             with open(tmp_data_f, 'wb') as f:
                 pickle.dump(tmp_data, f)
+            saved_count += 1
         else:
             with open(tmp_data_f, 'rb') as f:
                 tmp_data = pickle.load(f)
+            loaded_count += 1
         split_dict[cohort][k] = tmp_data
+    if loaded_count > 0:
+        print(f"  {cohort}: loaded {loaded_count} from cache, saved {saved_count} new")
+    else:
+        print(f"  {cohort}: saved {saved_count} files")
 
-##Mean imputation, if one vital is entirely missing, the value at the starting point will be imputed with mean value  
-##randomly mask out 20% data to assess the performance of autoencoder      
-train_mean = mean_imputation(split_dict["training"]["feat"], split_dict["training"]["padding_mask"], pre_mean=None)
-for cohort in COHORTS:
-    if cohort in ["validation", "testing"]:
-        _ = mean_imputation(split_dict[cohort]["feat"], split_dict[cohort]["padding_mask"], pre_mean=train_mean)
-        _ = mean_imputation(split_dict[cohort]["feat"], split_dict[cohort]["padding_mask"], pre_mean=train_mean)
-    split_dict[cohort]["drop_mask"] = hold_out(split_dict[cohort]["padding_mask"])
-    
+##Mean imputation, if one vital is entirely missing, the value at the starting point will be imputed with mean value
+##randomly mask out 20% data to assess the performance of autoencoder
 ##normalize dataset
 processed_data_path = os.path.join(model_data_path, "split_processed")
-normalize_data(split_dict)
-os.makedirs(processed_data_path, exist_ok=True)
-for cohort, cohort_dict in split_dict.items():
-    tmp_data_f = os.path.join(processed_data_path, "{}.pickle".format(cohort))
-    if not os.path.exists(tmp_data_f):
+
+# Check if all processed files already exist (early exit)
+all_processed_exist = all(
+    os.path.exists(os.path.join(processed_data_path, f"{cohort}.pickle"))
+    for cohort in COHORTS
+)
+
+if all_processed_exist and not args.clean:
+    print("=" * 50)
+    print("All processed data files already exist!")
+    print("  Use --clean flag to force reprocessing")
+    print(f"  Output location: {processed_data_path}")
+else:
+    print("=" * 50)
+    print("Step 6: Applying mean imputation...")
+    train_mean = mean_imputation(split_dict["training"]["feat"], split_dict["training"]["padding_mask"], pre_mean=None)
+    print(f"  Training mean values: {train_mean}")
+    for cohort in COHORTS:
+        print(f"  Processing {cohort} imputation and hold-out mask...")
+        if cohort in ["validation", "testing"]:
+            _ = mean_imputation(split_dict[cohort]["feat"], split_dict[cohort]["padding_mask"], pre_mean=train_mean)
+            _ = mean_imputation(split_dict[cohort]["feat"], split_dict[cohort]["padding_mask"], pre_mean=train_mean)
+        split_dict[cohort]["drop_mask"] = hold_out(split_dict[cohort]["padding_mask"])
+
+    print("=" * 50)
+    print("Step 7: Normalizing data...")
+    normalize_data(split_dict)
+    print("  Normalization complete")
+
+    print("=" * 50)
+    print("Step 8: Saving processed data...")
+    os.makedirs(processed_data_path, exist_ok=True)
+    for cohort, cohort_dict in split_dict.items():
+        tmp_data_f = os.path.join(processed_data_path, "{}.pickle".format(cohort))
         with open(tmp_data_f, 'wb') as f:
             pickle.dump(cohort_dict, f)
+        print(f"  Saved {cohort}.pickle")
+
+    print("=" * 50)
+    print("Data processing complete!")
+    print(f"Output saved to: {processed_data_path}")

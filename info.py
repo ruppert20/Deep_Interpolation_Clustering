@@ -1,6 +1,6 @@
 import os
-BASE_PATH = os.path.dirname(os.getcwd())
-USE_FEATURES = ['sbp', 'dbp', 'heartRate', 'temperature', 'spo2', 'respiratory']
+BASE_PATH = os.path.dirname(os.path.abspath(__file__))
+USE_FEATURES = ['sbp', 'dbp', 'heartRate', 'spo2', 'respiratory']
 COHORTS = ['training', 'validation', 'testing']
 DATA_DICT_KEYS = ["feat", "time_step", "padding_mask", "encounter_id"]
 MIN_MAX_VALUES = {'sbp': [20, 300], 'dbp': [5, 225], 'heartRate': [0, 300],

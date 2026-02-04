@@ -3,6 +3,17 @@ This is the repo for the implementation of paper 'Identifying acute illness phen
 
 ![image](https://github.com/Prisma-pResearch/Deep_Interpolation_Clustering/assets/31426497/ee517db4-4990-400b-b4c3-77971124ec8e)
 
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Data Format](docs/data-format.md) | Complete file structure and data specifications |
+| [Step 0: Data Processing](docs/p0-data-processing.md) | Preprocessing raw vital signs data |
+| [Step 1: Pretraining](docs/p1-pretraining.md) | Training the interpolation network |
+| [Step 2: Optimal K](docs/p2-optimal-k.md) | Determining optimal number of clusters |
+| [Step 3: Clustering](docs/p3-clustering.md) | Joint feature learning and clustering |
+| [Step 4: Final Clusters](docs/p4-final-clustering.md) | Generating final cluster assignments |
+
 ## Prerequisites
 **Python 3.12**
 
@@ -139,24 +150,37 @@ with open('idx.pickle', 'wb') as f:
     pickle.dump(split_idx, f)
 ```
 
-## How to run
-* Step 1: process data. Run p0_data_process.py to format and standardize the input time series data. Run get_abnormal_vital.py to get the maximum/minimum vital values in the 7th hour. This is used for auxiliary prediction tasks. Change the path of input data in the script based on your own folder structure.<br />
-   * python p0_data_process.py <br />
-   * python get_abnormal_vital.py <br />
-* Step 2: run p1_pretrain_main.py to pretrain the interpolation natwork to generate the feature represention of the time series data. <br />
-   * python p1_pretrain_main.py
-* Step 3: run p2_clustering_optK.py to help determine the optimal number of clusters. Supporting figures and scores(i.e., gap_statistic and elblow figures) are generated. Optimal number is determined manually. <br />
-   * python p2_clustering_optK.py
-* Step 4: run p3_clustering_main.py to jointly learn the feature representation and clustering. <br />
-   * python p3_clustering_main.py
-* Step 5: run p4_clustering_final.py to obtain the final cluster labels. <br />
-   * python p4_clustering_final.py
+## Quick Start
 
+See the [detailed documentation](docs/) for complete instructions. Basic workflow:
 
+```bash
+# Step 0: Process data
+python p0_data_process.py --hours_from_admission 24
 
+# Step 1: Pretrain interpolation network
+python p1_pretrain_main.py --mode train --hours_from_admission 24 \
+    --num_variables 5 --num_timestamps <MAX_LENGTH> --num_gpus 0
 
+# Step 2: Determine optimal K
+python p2_clustering_optK.py --k_max 10
 
+# Step 3: Joint clustering
+python p3_clustering_main.py --mode train --cluster_number 4 \
+    --hours_from_admission 24 --num_variables 5 --num_timestamps <MAX_LENGTH>
 
+# Step 4: Generate final clusters
+python p4_clustering_final.py --cluster_method kmeans --num_clusters 4
+```
 
+**Note:** Replace `<MAX_LENGTH>` with the `max_length` value output by p0 (e.g., 14252).
 
+### Key Parameters
+
+| Parameter | Description | Where to find |
+|-----------|-------------|---------------|
+| `--hours_from_admission` | Hours of data | Your data choice |
+| `--num_variables` | Number of vitals | `len(USE_FEATURES)` in info.py |
+| `--num_timestamps` | Max sequence length | `max_length` from p0 output |
+| `--cluster_number` | Number of clusters | Determined from p2 |
 

@@ -1,0 +1,11 @@
+# Data
+Data/
+Results/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# MacOS files
+.DS_Store

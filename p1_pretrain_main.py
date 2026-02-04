@@ -72,11 +72,11 @@ def get_arguments():
                           choices=['ae_mse', 'ae_mse_sup', 'ae_mse_fake_detect', 'ae_mse_fake_detect_triplet', 'ae_mse_sup_fake_detect',
                                    'ae_mse_kl', 'ae_mse_fake_detect_kl', 'ae_mse_sup_kl', 'ae_mse_sup_fake_detect_kl'])
     ###aux multi_task and their weights when combine loss of multi-task
-    learning.add_argument('--aux_tasks', default={'future_vital' : .5},
-                          help="The auxiliary tasks used for training, including AKI_overall, mort_status_30d, ICU, ICU_24h, future_vital")
+    learning.add_argument('--aux_tasks', default={'combined_endpoint': 1.0},
+                          help="The auxiliary tasks used for training, including combined_endpoint, ICU, rapid_response, mort_status_30d, icu_mortality")
     ###weight when compute binary_cross_entropy
-    learning.add_argument('--aux_pos_weights', default={"future_vital": 1, 'AKI_overall' : 1, 'mort_status_30d' : 1, 'ICU' : 1},
-                          help='The positive weight for different aux task: neg/pos (6, 25) for imbalance problem.')
+    learning.add_argument('--aux_pos_weights', default={"combined_endpoint": 26, "ICU": 1, "rapid_response": 1, "mort_status_30d": 1},
+                          help='The positive weight for different aux task: neg/pos ratio for imbalance problem.')
     ###weight when combine multi_task and their weight
     learning.add_argument('--unsup_aux_tasks', default={'fake_detection': 1., 'triplet': 1., 'kl': 10.},
                           help='The unsupervised task and its weight')

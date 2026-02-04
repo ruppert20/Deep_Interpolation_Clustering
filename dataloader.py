@@ -81,30 +81,43 @@ class DataSet(Dataset):
     def _load_auxiliary_data(self):
         outcome_df = pd.read_csv(os.path.join(self.auxiliary_data_path, "table_data.csv"))
         mortality_df = pd.read_csv(os.path.join(self.auxiliary_data_path, "mortality_summary.csv"))
-        future_vital_df = pd.read_csv(os.path.join(self.future_vital_path, 'next_hour_abnormal_norm_val.csv'))
+        # Ensure consistent string type for merge key
+        self.encounter_ids_df['encounter_deiden_id'] = self.encounter_ids_df['encounter_deiden_id'].astype(str)
+        outcome_df['encounter_deiden_id'] = outcome_df['encounter_deiden_id'].astype(str)
+        mortality_df['encounter_deiden_id'] = mortality_df['encounter_deiden_id'].astype(str)
         auxiliary_df = self.encounter_ids_df.merge(outcome_df)
         auxiliary_df = auxiliary_df.merge(mortality_df)
-        auxiliary_df = auxiliary_df.merge(future_vital_df)
-        
+
         auxiliary_dict = dict()
         auxiliary_dict['encounter_deiden_id'] = self.encounter_ids_df['encounter_deiden_id'].values
-        
+
+        # Only load future_vital data if that task is requested
         if 'future_vital' in self.aux_tasks:
-            future_vital_data = auxiliary_df[USE_FEATURES]
-            mask_df = pd.DataFrame()
-            for i, value in enumerate(future_vital_data.columns):
-                mask_df[value + '_mask'] = future_vital_data[value].notnull().astype(int)
-            mask_arr = np.asarray(mask_df)
-            auxiliary_dict['future_vital_mask'] = mask_arr 
-            
-            value_df = future_vital_data.fillna(0)
-            auxiliary_dict['future_vital'] = np.asarray(value_df)
-            self.logger.info('Finish loading future vital data and mask.')
-        
+            future_vital_path = os.path.join(self.future_vital_path, 'next_hour_abnormal_norm_val.csv')
+            if os.path.exists(future_vital_path):
+                future_vital_df = pd.read_csv(future_vital_path)
+                auxiliary_df = auxiliary_df.merge(future_vital_df)
+                future_vital_data = auxiliary_df[USE_FEATURES]
+                mask_df = pd.DataFrame()
+                for i, value in enumerate(future_vital_data.columns):
+                    mask_df[value + '_mask'] = future_vital_data[value].notnull().astype(int)
+                mask_arr = np.asarray(mask_df)
+                auxiliary_dict['future_vital_mask'] = mask_arr
+
+                value_df = future_vital_data.fillna(0)
+                auxiliary_dict['future_vital'] = np.asarray(value_df)
+                self.logger.info('Finish loading future vital data and mask.')
+            else:
+                self.logger.warning(f'future_vital task requested but {future_vital_path} not found. Skipping.')
+
         for auxiliary_k in self.aux_tasks:
             if auxiliary_k == 'future_vital':
-                continue 
-            
+                continue
+
+            if auxiliary_k not in auxiliary_df.columns:
+                self.logger.warning(f'Auxiliary task {auxiliary_k} not found in data. Skipping.')
+                continue
+
             row_data = auxiliary_df[auxiliary_k].values
             processed_data = self._process_auxiliary_data(auxiliary_k, row_data)
             auxiliary_dict[auxiliary_k] = processed_data
@@ -113,7 +126,8 @@ class DataSet(Dataset):
         return auxiliary_dict
 
     def _process_auxiliary_data(self, auxiliary_task, row_data):
-        if auxiliary_task in ["AKI_overall", "ICU_24h", "ICU", "mort_status_30d", 'mort_status_3y']:
+        if auxiliary_task in ["AKI_overall", "ICU_24h", "ICU", "mort_status_30d", "mort_status_3y",
+                              "combined_endpoint", "rapid_response", "icu_mortality"]:
             numerical_data = (row_data == "Y").astype(int)
         return numerical_data
 
