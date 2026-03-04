@@ -12,24 +12,33 @@ This script performs joint learning of feature representations and cluster assig
 ## Usage
 
 ```bash
-# Training with 4 clusters (CPU)
-python p3_clustering_main.py --mode train --cluster_number 4 --hours_from_admission 24 --num_variables 5 --num_timestamps 14252 --num_gpus 0
+# Training with 4 clusters (CPU) - data parameters auto-loaded from metadata
+python p3_clustering_main.py --mode train --cluster_number 4 --num_gpus 0
 
 # Training with GPU
-python p3_clustering_main.py --mode train --cluster_number 4 --hours_from_admission 24 --num_variables 5 --num_timestamps 14252 --num_gpus 1
+python p3_clustering_main.py --mode train --cluster_number 4 --num_gpus 1
 
-# Evaluation only
-python p3_clustering_main.py --mode eval --cluster_number 4 --restore
+# Evaluation only (cluster_number auto-loaded if previously run)
+python p3_clustering_main.py --mode eval --restore
 ```
 
-## Critical Parameters
+## Automatic Parameter Loading
 
-| Parameter | Description | How to determine |
-|-----------|-------------|------------------|
-| `--cluster_number` | Number of clusters | From p2 analysis |
-| `--hours_from_admission` | Hours of data | Same as p0/p1 |
-| `--num_variables` | Number of vitals | Same as p1 |
-| `--num_timestamps` | Max sequence length | Same as p1 |
+Data parameters are automatically loaded from `metadata.json` (created by p0):
+
+| Parameter | Source | Can Override |
+|-----------|--------|--------------|
+| `--hours_from_admission` | metadata.json | Yes |
+| `--num_variables` | metadata.json | Yes |
+| `--num_timestamps` | metadata.json | Yes |
+| `--cluster_number` | metadata.json (if previously run) | Yes |
+
+On startup, you'll see:
+```
+Loaded metadata: num_timestamps=14252, num_variables=5, hours=24, cluster_number=4
+```
+
+**Note:** This script saves `cluster_number` to metadata for use by p4.
 
 ## Command Line Arguments
 
@@ -38,7 +47,7 @@ python p3_clustering_main.py --mode eval --cluster_number 4 --restore
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
 | `--mode` | str | train | 'train' or 'eval' |
-| `--cluster_number` | int | 4 | Number of clusters (from p2) |
+| `--cluster_number` | int | *from metadata or 4* | Number of clusters (auto-loaded if available) |
 | `--init_cluster_center` | str | kmeans | Initialization method |
 | `--restore_metric` | str | ae_mse | Pretrained model to load |
 | `--dc_restore_metric` | str | ae_mse | Deep cluster model metric |

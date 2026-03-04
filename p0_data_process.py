@@ -5,11 +5,12 @@ Created by yanjun.li at 12/3/19
 modified by Yuanfang Ren
 """
 import pickle
+import json
 from collections import defaultdict
 import os
 import pandas as pd
-import numpy as np 
-import random  
+import numpy as np
+import random
 import tensorflow as tf
 import argparse
 from info import BASE_PATH, USE_FEATURES, COHORTS, MIN_MAX_VALUES
@@ -358,3 +359,23 @@ else:
     print("=" * 50)
     print("Data processing complete!")
     print(f"Output saved to: {processed_data_path}")
+
+# Save metadata for downstream scripts (p1, p3, etc.)
+print("=" * 50)
+print("Saving metadata...")
+metadata = {
+    "num_timestamps": int(data_dict['feat'].shape[2]),
+    "num_variables": int(data_dict['feat'].shape[1]),
+    "hours_from_admission": hours_from_admission,
+    "resample_minutes": resample_minutes,
+    "norm_method": norm_method,
+    "num_samples": {
+        cohort: int(split_dict[cohort]['feat'].shape[0]) for cohort in COHORTS
+    }
+}
+metadata_path = os.path.join(model_data_path, "metadata.json")
+with open(metadata_path, 'w') as f:
+    json.dump(metadata, f, indent=2)
+print(f"  Saved metadata to: {metadata_path}")
+print(f"  num_timestamps: {metadata['num_timestamps']}")
+print(f"  num_variables: {metadata['num_variables']}")

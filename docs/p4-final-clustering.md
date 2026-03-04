@@ -12,14 +12,25 @@ This script generates final cluster assignments and saves them in a standardized
 ## Usage
 
 ```bash
-# K-means clustering with 4 clusters
-python p4_clustering_final.py --cluster_method kmeans --num_clusters 4
+# K-means clustering - num_clusters auto-loaded from metadata (saved by p3)
+python p4_clustering_final.py --cluster_method kmeans
 
 # Use deep learning cluster assignments
-python p4_clustering_final.py --cluster_method dl --num_clusters 4
+python p4_clustering_final.py --cluster_method dl
 
-# DBSCAN clustering
+# Override auto-loaded num_clusters if needed
+python p4_clustering_final.py --cluster_method kmeans --num_clusters 6
+
+# DBSCAN clustering (doesn't use num_clusters)
 python p4_clustering_final.py --cluster_method dbscan --opt_eps 1.9
+```
+
+## Automatic Parameter Loading
+
+The `cluster_number` is automatically loaded from `metadata.json` (saved by p3):
+
+```
+Loaded cluster_number=4 from metadata
 ```
 
 ## Command Line Arguments
@@ -27,7 +38,7 @@ python p4_clustering_final.py --cluster_method dbscan --opt_eps 1.9
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
 | `--cluster_method` | str | kmeans | Algorithm: kmeans, dbscan, dl, consensus |
-| `--num_clusters` | int | 4 | Number of clusters (k-means, dl, consensus) |
+| `--num_clusters` | int | *from metadata or 4* | Number of clusters (auto-loaded) |
 | `--restore_metric` | list | ['ae_mse', 'loss', 'delta'] | Models to process |
 | `--opt_eps` | float | 1.9 | Epsilon for DBSCAN |
 | `--dl_cluster_label_type` | str | pred | For dl: use 'label' or 'pred' |
@@ -102,8 +113,8 @@ This ensures:
 
 ### Standard Workflow (K-Means)
 ```bash
-# Generate final clusters using k-means
-python p4_clustering_final.py --cluster_method kmeans --num_clusters 4
+# Generate final clusters using k-means (num_clusters auto-loaded from metadata)
+python p4_clustering_final.py --cluster_method kmeans
 ```
 
 ### Using Deep Learning Labels
@@ -116,7 +127,7 @@ python p4_clustering_final.py --cluster_method dl --dl_cluster_label_type pred
 The script processes all metrics in `--restore_metric`:
 ```bash
 # Process ae_mse, loss, and delta
-python p4_clustering_final.py --cluster_method kmeans --num_clusters 4 --restore_metric ae_mse loss delta
+python p4_clustering_final.py --cluster_method kmeans --restore_metric ae_mse loss delta
 ```
 
 ## Interpreting Results

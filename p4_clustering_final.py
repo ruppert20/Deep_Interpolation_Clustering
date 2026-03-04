@@ -2,12 +2,13 @@
 # -*- coding: utf-8 -*-
 
 """
-clustering.py: 
+clustering.py:
 """
 import copy
 import os
 import os.path as osp
 import argparse
+import json
 import numpy as np
 from internal_eval import Sihouette, DBIndex, CHIndex, DunnIndex
 import seaborn as sns
@@ -20,22 +21,41 @@ import gc
 import pandas as pd
 from kneed import KneeLocator
 from utils import print_dict_byline, logger
-from info import LEGEND_INFO, COHORTS
+from info import BASE_PATH, LEGEND_INFO, COHORTS
 np.random.seed(123)
+
+
+def load_metadata():
+    """Load metadata saved by p0_data_process.py and p3_clustering_main.py."""
+    metadata_path = os.path.join(BASE_PATH, 'Data', 'model_data', 'metadata.json')
+    if os.path.exists(metadata_path):
+        with open(metadata_path, 'r') as f:
+            return json.load(f)
+    return None
 
 ##The Silhouette score is bounded from -1 to 1 and higher score means more distinct clusters.
 ##The Calinski-Harabasz index compares the variance between-clusters to the variance within each cluster. This measure is much simpler to calculate then the Silhouette score however it is not bounded. The higher the score the better the separation is.
 ##Davies-Bouldin index is the ratio between the within cluster distances and the between cluster distances and computing the average overall the clusters. It is therefore relatively simple to compute, bounded – 0 to 1, lower score is better. 
 
 def get_arguments():
+    # Load metadata to get cluster_number from p3
+    metadata = load_metadata()
+    if metadata and 'cluster_number' in metadata:
+        default_num_clusters = metadata['cluster_number']
+        print(f"Loaded cluster_number={default_num_clusters} from metadata")
+    else:
+        default_num_clusters = 4
+        print("Warning: cluster_number not found in metadata. Using default=4. Run p3 first.")
+
     parser = argparse.ArgumentParser()
     parser.add_argument('--cluster_method', default='kmeans', choices=['kmeans', 'dbscan', 'dl', 'optics', 'consensus'],
                         help='For consensus, the labels are generated outside, and then directly loaded.')
-    parser.add_argument('--num_clusters', type=int, default=4, help="The number of cluster centers")
-    parser.add_argument('--restore_metric', default=['ae_mse', 'loss', 'delta'])    
+    parser.add_argument('--num_clusters', type=int, default=default_num_clusters,
+                        help="The number of cluster centers (auto-loaded from metadata if available)")
+    parser.add_argument('--restore_metric', default=['ae_mse', 'loss', 'delta'])
     parser.add_argument('--opt_eps', type=float, default=1.9, help="The optimal eps value for DBSCAN.")
     parser.add_argument('--dl_cluster_label_type', default='pred', choices=['label', 'pred'],
-                        help='Only for dl clustering, use the cluster assignment of cluster_label or cluster_pred')    
+                        help='Only for dl clustering, use the cluster assignment of cluster_label or cluster_pred')
     args = parser.parse_args()
     return args
 

@@ -12,25 +12,33 @@ This script trains the interpolation network to learn feature representations fr
 ## Usage
 
 ```bash
-# Training mode (CPU)
-python p1_pretrain_main.py --mode train --hours_from_admission 24 --num_variables 5 --num_timestamps 14252 --num_gpus 0
+# Training mode (CPU) - parameters auto-loaded from metadata.json
+python p1_pretrain_main.py --mode train --num_gpus 0
 
 # Training mode (GPU)
-python p1_pretrain_main.py --mode train --hours_from_admission 24 --num_variables 5 --num_timestamps 14252 --num_gpus 1
+python p1_pretrain_main.py --mode train --num_gpus 1
 
 # Evaluation only (load trained model)
-python p1_pretrain_main.py --mode eval --hours_from_admission 24 --num_variables 5 --num_timestamps 14252 --restore
+python p1_pretrain_main.py --mode eval --restore
+
+# Override auto-loaded parameters if needed
+python p1_pretrain_main.py --mode train --num_timestamps 500 --num_gpus 0
 ```
 
-## Critical Parameters
+## Automatic Parameter Loading
 
-These must match your data from p0:
+Parameters are automatically loaded from `metadata.json` (created by p0):
 
-| Parameter | Description | How to determine |
-|-----------|-------------|------------------|
-| `--hours_from_admission` | Hours of data | Same as p0 (e.g., 24) |
-| `--num_variables` | Number of vital signs | Length of `USE_FEATURES` in info.py |
-| `--num_timestamps` | Max sequence length | `max_length` output from p0 |
+| Parameter | Source | Can Override |
+|-----------|--------|--------------|
+| `--hours_from_admission` | metadata.json | Yes |
+| `--num_variables` | metadata.json | Yes |
+| `--num_timestamps` | metadata.json | Yes |
+
+On startup, you'll see:
+```
+Loaded metadata: num_timestamps=14252, num_variables=5, hours=24
+```
 
 ## Command Line Arguments
 
@@ -48,9 +56,9 @@ These must match your data from p0:
 
 | Argument | Type | Default | Description |
 |----------|------|---------|-------------|
-| `--hours_from_admission` | int | 6 | Hours of data (match p0) |
-| `--num_variables` | int | 6 | Number of vitals (match info.py) |
-| `--num_timestamps` | int | 354 | Max timestamps (from p0 output) |
+| `--hours_from_admission` | int | *from metadata* | Hours of data (auto-loaded) |
+| `--num_variables` | int | *from metadata* | Number of vitals (auto-loaded) |
+| `--num_timestamps` | int | *from metadata* | Max timestamps (auto-loaded) |
 | `--batch_size` | int | 256 | Training batch size |
 | `--num_workers` | int | 3 | Data loading workers |
 | `--scale` | float | 5 | Scale factor for input normalization |

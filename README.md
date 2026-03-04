@@ -155,32 +155,41 @@ with open('idx.pickle', 'wb') as f:
 See the [detailed documentation](docs/) for complete instructions. Basic workflow:
 
 ```bash
-# Step 0: Process data
+# Step 0: Process data (saves metadata.json with num_timestamps, num_variables, etc.)
 python p0_data_process.py --hours_from_admission 24
 
-# Step 1: Pretrain interpolation network
-python p1_pretrain_main.py --mode train --hours_from_admission 24 \
-    --num_variables 5 --num_timestamps <MAX_LENGTH> --num_gpus 0
+# Step 1: Pretrain interpolation network (auto-loads parameters from metadata)
+python p1_pretrain_main.py --mode train --num_gpus 0
 
-# Step 2: Determine optimal K
+# Step 2: Determine optimal K (analyze plots to choose cluster count)
 python p2_clustering_optK.py --k_max 10
 
-# Step 3: Joint clustering
-python p3_clustering_main.py --mode train --cluster_number 4 \
-    --hours_from_admission 24 --num_variables 5 --num_timestamps <MAX_LENGTH>
+# Step 3: Joint clustering (saves cluster_number to metadata for p4)
+python p3_clustering_main.py --mode train --cluster_number 4
 
-# Step 4: Generate final clusters
-python p4_clustering_final.py --cluster_method kmeans --num_clusters 4
+# Step 4: Generate final clusters (auto-loads cluster_number from metadata)
+python p4_clustering_final.py --cluster_method kmeans
 ```
 
-**Note:** Replace `<MAX_LENGTH>` with the `max_length` value output by p0 (e.g., 14252).
+### Automatic Parameter Propagation
+
+The pipeline uses `metadata.json` to automatically pass parameters between steps:
+
+| Parameter | Saved by | Used by |
+|-----------|----------|---------|
+| `num_timestamps` | p0 | p1, p3 |
+| `num_variables` | p0 | p1, p3 |
+| `hours_from_admission` | p0 | p1, p3 |
+| `cluster_number` | p3 | p4 |
+
+You can still override any parameter via command line if needed.
 
 ### Key Parameters
 
-| Parameter | Description | Where to find |
-|-----------|-------------|---------------|
-| `--hours_from_admission` | Hours of data | Your data choice |
-| `--num_variables` | Number of vitals | `len(USE_FEATURES)` in info.py |
-| `--num_timestamps` | Max sequence length | `max_length` from p0 output |
-| `--cluster_number` | Number of clusters | Determined from p2 |
+| Parameter | Description | Default source |
+|-----------|-------------|----------------|
+| `--hours_from_admission` | Hours of data | metadata.json (from p0) |
+| `--num_variables` | Number of vitals | metadata.json (from p0) |
+| `--num_timestamps` | Max sequence length | metadata.json (from p0) |
+| `--cluster_number` | Number of clusters | metadata.json (from p3) or p2 analysis |
 

@@ -1,8 +1,11 @@
 # Deep Interpolation Clustering Requirements
 # Python 3.12
+# conda create -n DeepCluster_py3_12 python=3.12
+# conda activate DeepCluster_py3_12
 # Generated from DeepCluster_py3_12 conda environment
 
-torch==2.6.0
+# torch==2.6.0
+pytorch==2.6.0
 tensorboardX==2.6.2.2
 scikit-learn==1.8.0
 numpy==2.4.0
@@ -12,4 +15,4 @@ seaborn==0.13.2
 matplotlib==3.10.8
 scipy==1.16.3
 kneed==0.8.5
-warmup-scheduler==0.3
+# warmup-scheduler==0.3

@@ -7,7 +7,7 @@ train_cluster.py:
 
 from utils import logger, create_weight_dir, pytorch_optimizer, pytorch_lr_scheduler, create_flag_dict 
 from utils import Summary, timer, format_metric_dict, reduce_lr_on_plateau, save_model_update_flag, early_stop
-from info import COHORT2SCOPE, MIN_MAX_VALUES, METRICS, MIN_METRICS, MAX_METRICS,  SUMMARY_ITEMS
+from info import COHORT2SCOPE, USE_FEATURES, MIN_MAX_VALUES, METRICS, MIN_METRICS, MAX_METRICS,  SUMMARY_ITEMS
 import torch
 from datetime import datetime
 from tensorboardX import SummaryWriter
@@ -432,7 +432,7 @@ class TrainerCluster(object):
         logger.info("*******Restoring the pretrain model weight based on {}*******".format(self.args.restore_metric))
         restore_file = osp.join(self.pretrain_exp_path, 'weight', '{}'.format(self.args.restore_metric), 'model.pth.tar')
         if restore_file.endswith('.tar'):
-            checkpoint = torch.load(restore_file,map_location='cuda:0')
+            checkpoint = torch.load(restore_file, map_location=self.device)
             pretrained_dict = checkpoint['state_dict']
             model_dict = self.model.state_dict()
 
@@ -521,7 +521,7 @@ class TrainerCluster(object):
         logger.info("*******Restoring the model weight based on {}*******".format(self.args.dc_restore_metric))
         restore_file = osp.join(self.exp_path, 'weight', self.args.dc_restore_metric, 'model.pth.tar')
         if restore_file.endswith('.tar'):
-            checkpoint = torch.load(restore_file,map_location='cuda:0')
+            checkpoint = torch.load(restore_file, map_location=self.device)
             self.epoch = checkpoint['epoch']
             self.model.load_state_dict(checkpoint['state_dict'])
             self.optimizer.load_state_dict(checkpoint['optimizer'])
@@ -536,8 +536,8 @@ class TrainerCluster(object):
                 normed_data = ob_pred_dict[k]
                 renorm = (normed_data + self.args.scale / 2) / self.args.scale  # Back to [0, 1]
 
-                for i, (feat_name, val_range) in enumerate(MIN_MAX_VALUES.items()):
-                    min_val, max_val = val_range
+                for i, feat_name in enumerate(USE_FEATURES):
+                    min_val, max_val = MIN_MAX_VALUES[feat_name]
                     normed_data[:, i, :] = renorm[:, i, :] * (max_val - min_val) + min_val
                 ob_pred_dict[k] = normed_data
             return ob_pred_dict

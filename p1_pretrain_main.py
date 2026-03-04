@@ -8,16 +8,40 @@ from pretrain_trainer import Trainer
 from torch.utils.data import DataLoader
 from dataloader import DataSet
 from utils import set_seed, count_parameters, logger
-from info import COHORTS, METRICS
+from info import BASE_PATH, COHORTS, METRICS
 import os
+import json
 import random
 import torch
 from pretrain_interp import Net
 import argparse
 
+
+def load_metadata():
+    """Load metadata saved by p0_data_process.py."""
+    metadata_path = os.path.join(BASE_PATH, 'Data', 'model_data', 'metadata.json')
+    if os.path.exists(metadata_path):
+        with open(metadata_path, 'r') as f:
+            return json.load(f)
+    return None
+
 def get_arguments():
     description = "Implementation of deep clustering for time series data"
     parser = argparse.ArgumentParser(description=description)
+
+    # Load metadata from p0 to get sensible defaults
+    metadata = load_metadata()
+    if metadata:
+        default_num_timestamps = metadata['num_timestamps']
+        default_num_variables = metadata['num_variables']
+        default_hours = metadata['hours_from_admission']
+        print(f"Loaded metadata: num_timestamps={default_num_timestamps}, "
+              f"num_variables={default_num_variables}, hours={default_hours}")
+    else:
+        default_num_timestamps = 354
+        default_num_variables = 6
+        default_hours = 6
+        print("Warning: metadata.json not found. Using default values. Run p0_data_process.py first.")
 
     # General options
     general = parser.add_argument_group('General options')
@@ -38,7 +62,7 @@ def get_arguments():
     # Data Options
     ##The store_true option automatically creates a default value of False.
     data = parser.add_argument_group('Data specific options')
-    data.add_argument('--hours_from_admission', type=int, default=6, help='Hours of record to look at')
+    data.add_argument('--hours_from_admission', type=int, default=default_hours, help='Hours of record to look at')
     data.add_argument('--num_workers', type=int, default=3, help='The number of workers used for loading data.')
     data.add_argument('--batch_size', type=int, default=256, help='batch size for the lstm training')
     data.add_argument('--norm_method', type=str, default='minmax', choices=['minmax'],
@@ -48,8 +72,9 @@ def get_arguments():
     data.add_argument('--scale', type=float, default=5,
                       help='0: No scale, keep original [0, 1]; Otherwise scale the input to [-scale/2, +scale/2]')
     data.add_argument('--denoise', default=False, help='Whether to denoise the input.')
-    data.add_argument('--num_variables', type=int, default=6, help='The number of observation variables.')
-    data.add_argument('--num_timestamps', type=int, default=354)
+    data.add_argument('--num_variables', type=int, default=default_num_variables, help='The number of observation variables.')
+    data.add_argument('--num_timestamps', type=int, default=default_num_timestamps,
+                      help='Number of timestamps (auto-loaded from metadata.json if available)')
     data.add_argument('--data_filter', action='store_true',
                       help='If yes, align the data as same as Ren by removing some samples')
     data.add_argument('--evaluate_interpolation', default=False,
@@ -72,7 +97,7 @@ def get_arguments():
                           choices=['ae_mse', 'ae_mse_sup', 'ae_mse_fake_detect', 'ae_mse_fake_detect_triplet', 'ae_mse_sup_fake_detect',
                                    'ae_mse_kl', 'ae_mse_fake_detect_kl', 'ae_mse_sup_kl', 'ae_mse_sup_fake_detect_kl'])
     ###aux multi_task and their weights when combine loss of multi-task
-    learning.add_argument('--aux_tasks', default={'combined_endpoint': 1.0},
+    learning.add_argument('--aux_tasks', default={'combined_endpoint': 10.0},
                           help="The auxiliary tasks used for training, including combined_endpoint, ICU, rapid_response, mort_status_30d, icu_mortality")
     ###weight when compute binary_cross_entropy
     learning.add_argument('--aux_pos_weights', default={"combined_endpoint": 26, "ICU": 1, "rapid_response": 1, "mort_status_30d": 1},
@@ -95,7 +120,7 @@ def get_arguments():
     learning.add_argument('--grad_clip', type=float, default=15)
     learning.add_argument('--weight_decay_rate', '-wd', type=float, default=0.0004,
                           help='The weight decay rate for l2 loss.')
-    learning.add_argument('--early_stopping', default=50, help='The early stopping step.')
+    learning.add_argument('--early_stopping', type=int, default=50, help='The early stopping step.')
 
     args = parser.parse_args()
     return args

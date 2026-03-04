@@ -15,11 +15,12 @@ from sklearn.cluster import KMeans, DBSCAN, OPTICS
 from sklearn.neighbors import NearestNeighbors
 from sklearn.metrics import pairwise_distances, silhouette_score
 from scipy.spatial.distance import cdist
+from scipy.stats import chi2_contingency
 import gc
 import pandas as pd
 from kneed import KneeLocator
 from utils import print_dict_byline, logger
-from info import LEGEND_INFO, COHORTS
+from info import BASE_PATH, LEGEND_INFO, COHORTS
 np.random.seed(123)
 
 ##The Silhouette score is bounded from -1 to 1 and higher score means more distinct clusters.
@@ -31,13 +32,14 @@ def get_arguments():
     parser.add_argument('--cluster_method', default='kmeans', choices=['kmeans', 'dbscan', 'dl', 'optics', 'consensus'],
                         help='For consensus, the labels are generated outside, and then directly loaded.')
     parser.add_argument('--k_max', type=int, default=10, help='The max value of k, for k-means only.')
-    parser.add_argument('--select_opt_k', default=['gap_sts', 'elbow'])
+    parser.add_argument('--select_opt_k', default=['gap_sts', 'elbow', 'outcome'])
     parser.add_argument('--select_eps', type=str, default='k_distance_graph', help='Select eps for DBSCAN')
     parser.add_argument('--n_init', type=int, default=10, help='The number of initialization for k-means.')
     parser.add_argument('--gap_b', type=int, default=10, help='The number of randomly sampling for gap-sts.')
     parser.add_argument('--restore_metric', default=['ae_mse', 'loss'])
     parser.add_argument('--opt_eps', type=float, default=1.9, help="The optimal eps value for DBSCAN.")
     parser.add_argument('--internal_metrics', default=["Sihouette", "Davies-Bouldin_Index", "Calinski-Harabasz"])
+    parser.add_argument('--overwrite', action='store_true', help='Overwrite existing plot files')
     args = parser.parse_args()
     return args
 
@@ -78,14 +80,14 @@ class Cluster(object):
                 print('kmeans')
                 k_max = self.args.k_max
                 km = KM(k_max, self.out_path, self.args.internal_metrics, self.args.n_init, self.args.gap_b)
-                km.train(self.train_data, self.valid_data, self.args.select_opt_k)
+                km.train(self.train_data, self.valid_data, self.args.select_opt_k, overwrite=self.args.overwrite)
             elif self.args.cluster_method == 'dbscan':
                 eps_range = np.arange(.5, 5.1, .5)  # v11_2: 1.8-2.0; v8_1: 2.0-3.0
                 db = Dbscan(eps_range=eps_range, min_samples=self.feat_dim+1, out_path=self.out_path)
-                db.train(self.train_data, self.valid_data, self.args.select_eps)
+                db.train(self.train_data, self.valid_data, self.args.select_eps, overwrite=self.args.overwrite)
             elif self.args.cluster_method == 'optics':
                 op = Optics(min_samples=self.feat_dim+1, cluster_method='xi', out_path=self.out_path)   # cluster_method='dbscan'
-                op.train(self.train_data, self.valid_data)
+                op.train(self.train_data, self.valid_data, overwrite=self.args.overwrite)
 
 class Dbscan(object):
     def __init__(self, eps_range, min_samples, out_path):
@@ -217,10 +219,9 @@ class Optics(object):
             sc.set_ylabel('Samples', fontsize=40)
             sc.tick_params(axis='both', labelsize=35)
 
-            fig.show()
-
             fig.savefig(plot_png, bbox_inches='tight')  # , dpi=300
             logger.info("Saved for {}!.".format(plot_png))
+            plt.close(fig)
 
 
 class KM(object):
@@ -252,7 +253,9 @@ class KM(object):
         train_feat, valid_feat = train_data['hidden'], valid_data['hidden']
 
         for method in select_opt_k:
-            if method == 'elbow':
+            if method == 'outcome':
+                self.outcome_discrimination(train_data, overwrite=overwrite)
+            elif method == 'elbow':
                 rng = range(2, self.k_max + 1)
                 train_distortions, valid_distortions = [], []
                 for k in rng:
@@ -270,8 +273,8 @@ class KM(object):
                     plt.xlabel('Cluster Count', fontsize=18)
                     plt.ylabel('Distortion', fontsize=18)
                     plt.title('The Elbow method showing the optimal k', fontsize=20)
-                    plt.show()
                     plt.savefig(os.path.join(self.out_path, '{}_elbow.png'.format(cohort)))
+                    plt.close()
     
             elif method == 'gap_sts':
                 for gap_sts_version in [1]:
@@ -408,6 +411,126 @@ class KM(object):
             info_str = gap_sts_str + metric_str
             logger.info(info_str)
         return vals
+
+    def outcome_discrimination(self, train_data, overwrite=False):
+        """Evaluate each K by how well clusters separate the combined endpoint.
+
+        For each K, runs k-means, builds a cluster x endpoint contingency table,
+        and computes chi-squared statistic, p-value, risk ratio (max/min cluster
+        event rate), and absolute risk spread (max - min).  Results are saved to
+        CSV and plotted.
+        """
+        csv_path = osp.join(self.out_path, 'outcome_discrimination.csv')
+        if osp.exists(csv_path) and not overwrite:
+            logger.info('Loading existing outcome discrimination results from {}'.format(csv_path))
+            return pd.read_csv(csv_path)
+
+        # Load outcome labels matched to training encounter IDs
+        table_data_path = osp.join(BASE_PATH, 'Data', 'analysis_data', 'table_data.csv')
+        outcomes = pd.read_csv(table_data_path).rename(columns={'encounter_deiden_id': 'encounter_id'})
+        outcomes['encounter_id'] = outcomes['encounter_id'].astype(str)
+        outcomes['combined_endpoint_bin'] = (outcomes['combined_endpoint'] == 'Y').astype(int)
+        outcomes['ICU_bin'] = (outcomes['ICU'] == 'Y').astype(int)
+        outcomes['rapid_response_bin'] = (outcomes['rapid_response'] == 'Y').astype(int)
+
+        train_feat = train_data['hidden']
+        train_ids = np.array(train_data['encounter_id']).astype(str)
+
+        k_rng = range(2, self.k_max + 1)
+        rows = []
+
+        for k in k_rng:
+            km = KMeans(n_clusters=k, n_init=self.n_init, init='k-means++').fit(train_feat)
+            labels = km.labels_
+
+            df = pd.DataFrame({'encounter_id': train_ids, 'cluster': labels})
+            df = df.merge(outcomes, on='encounter_id', how='inner')
+
+            results = {'k': k}
+
+            for endpoint, col in [('combined_endpoint', 'combined_endpoint_bin'),
+                                  ('ICU', 'ICU_bin'),
+                                  ('rapid_response', 'rapid_response_bin')]:
+                ct = pd.crosstab(df['cluster'], df[col])
+
+                # Ensure both columns exist (0 and 1)
+                if ct.shape[1] < 2:
+                    results['{}_chi2'.format(endpoint)] = 0.0
+                    results['{}_pvalue'.format(endpoint)] = 1.0
+                    results['{}_risk_ratio'.format(endpoint)] = 1.0
+                    results['{}_risk_spread'.format(endpoint)] = 0.0
+                    continue
+
+                chi2, p_value, _, _ = chi2_contingency(ct)
+
+                cluster_rates = ct[1] / ct.sum(axis=1)
+                min_rate = cluster_rates.min()
+                max_rate = cluster_rates.max()
+                risk_ratio = max_rate / min_rate if min_rate > 0 else float('inf')
+                risk_spread = max_rate - min_rate
+
+                results['{}_chi2'.format(endpoint)] = chi2
+                results['{}_pvalue'.format(endpoint)] = p_value
+                results['{}_risk_ratio'.format(endpoint)] = risk_ratio
+                results['{}_risk_spread'.format(endpoint)] = risk_spread
+
+                logger.info('K={}: {} chi2={:.2f}, p={:.4f}, risk_ratio={:.2f}, '
+                            'spread={:.4f} (min={:.4f}, max={:.4f})'.format(
+                    k, endpoint, chi2, p_value, risk_ratio, risk_spread, min_rate, max_rate))
+
+            rows.append(results)
+
+        result_df = pd.DataFrame(rows)
+        result_df.to_csv(csv_path, index=False)
+        logger.info('Outcome discrimination results saved to {}'.format(csv_path))
+
+        # Plot: risk ratio and chi2 for combined_endpoint across K
+        fig, axes = plt.subplots(2, 2, figsize=(20, 14))
+        fig.suptitle('Outcome-Aware K Selection', fontsize=22)
+
+        ks = result_df['k'].values
+
+        ax = axes[0, 0]
+        ax.plot(ks, result_df['combined_endpoint_chi2'], 'o-', linewidth=2, color='#e74c3c')
+        ax.set_xlabel('K', fontsize=16)
+        ax.set_ylabel('Chi-squared', fontsize=16)
+        ax.set_title('Combined Endpoint: Chi-squared', fontsize=18)
+        ax.set_xticks(ks)
+
+        ax = axes[0, 1]
+        ax.plot(ks, result_df['combined_endpoint_risk_ratio'], 's-', linewidth=2, color='#3498db')
+        ax.set_xlabel('K', fontsize=16)
+        ax.set_ylabel('Risk Ratio (max/min)', fontsize=16)
+        ax.set_title('Combined Endpoint: Risk Ratio', fontsize=18)
+        ax.set_xticks(ks)
+
+        ax = axes[1, 0]
+        for endpoint, color in [('combined_endpoint', '#e74c3c'), ('ICU', '#3498db'), ('rapid_response', '#2ecc71')]:
+            ax.plot(ks, result_df['{}_risk_spread'.format(endpoint)], 'o-', linewidth=2, color=color, label=endpoint)
+        ax.set_xlabel('K', fontsize=16)
+        ax.set_ylabel('Risk Spread (max - min rate)', fontsize=16)
+        ax.set_title('Risk Spread Across Endpoints', fontsize=18)
+        ax.set_xticks(ks)
+        ax.legend(fontsize=14)
+
+        ax = axes[1, 1]
+        for endpoint, color in [('combined_endpoint', '#e74c3c'), ('ICU', '#3498db'), ('rapid_response', '#2ecc71')]:
+            pvals = result_df['{}_pvalue'.format(endpoint)]
+            ax.plot(ks, -np.log10(pvals.clip(lower=1e-20)), 'o-', linewidth=2, color=color, label=endpoint)
+        ax.axhline(-np.log10(0.05), color='gray', linestyle='--', label='p=0.05')
+        ax.set_xlabel('K', fontsize=16)
+        ax.set_ylabel('-log10(p-value)', fontsize=16)
+        ax.set_title('Statistical Significance', fontsize=18)
+        ax.set_xticks(ks)
+        ax.legend(fontsize=14)
+
+        plt.tight_layout()
+        plot_path = osp.join(self.out_path, 'outcome_discrimination.png')
+        fig.savefig(plot_path, bbox_inches='tight')
+        plt.close(fig)
+        logger.info('Outcome discrimination plot saved to {}'.format(plot_path))
+
+        return result_df
 
 
 def main(args):

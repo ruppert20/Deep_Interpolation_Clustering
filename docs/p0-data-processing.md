@@ -69,6 +69,27 @@ Data/model_data/split_processed/
 └── testing.pickle
 ```
 
+### Metadata File
+```
+Data/model_data/metadata.json
+```
+
+Contains parameters for downstream scripts (p1, p3, p4):
+```json
+{
+  "num_timestamps": 288,
+  "num_variables": 5,
+  "hours_from_admission": 24,
+  "resample_minutes": 5,
+  "norm_method": "minmax",
+  "num_samples": {
+    "training": 1598,
+    "validation": 341,
+    "testing": 340
+  }
+}
+```
+
 Each processed pickle contains:
 ```python
 {
@@ -180,7 +201,19 @@ Step 5: Splitting and saving original data...
 All processed data files already exist!
   Use --clean flag to force reprocessing
   Output location: /path/to/Data/model_data/split_processed
+==================================================
+Saving metadata...
+  Saved metadata to: /path/to/Data/model_data/metadata.json
+  num_timestamps: 14252
+  num_variables: 5
 ```
+
+## Metadata for Downstream Scripts
+
+The `metadata.json` file is automatically loaded by p1, p3, and p4, eliminating the need to manually specify:
+- `--num_timestamps`
+- `--num_variables`
+- `--hours_from_admission`
 
 ## Next Step
 
